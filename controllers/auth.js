@@ -124,3 +124,105 @@ exports.register = async (req, res) => {
     })
     .catch(err => res.status(400).json({ message: "bad-request", data: "There's a problem with your account! Please contact customer support for more details." }))
 }
+
+exports.checkSession = async (req, res) => {
+    const token = req.headers.cookie?.split('; ').find(row => row.startsWith('sessionToken='))?.split('=')[1];
+
+    if (!token) {
+        return res.status(401).json({ 
+            message: 'Unauthorized', 
+            data: "No active session found!" 
+        });
+    }
+
+    try {
+        const publicKey = fs.readFileSync(path.resolve(__dirname, "../keys/public-key.pem"), 'utf-8');
+        const decodedToken = await jsonwebtokenPromisified.verify(token, publicKey, { algorithms: ['RS256'] });
+
+        // Check if it's a user or staff account
+        if (decodedToken.auth === "user") {
+            const user = await Users.findById(decodedToken.id);
+
+            if (!user) {
+                return res.status(401).json({ 
+                    message: 'Unauthorized', 
+                    data: "User not found!" 
+                });
+            }
+
+            if (user.status !== "active") {
+                return res.status(401).json({ 
+                    message: 'failed', 
+                    data: `Your account has been ${user.status}! Please contact support for more details.` 
+                });
+            }
+
+            if (decodedToken.token !== user.webtoken) {
+                return res.status(401).json({ 
+                    message: 'duallogin', 
+                    data: "Your account has been opened on another device! You will now be logged out." 
+                });
+            }
+
+            // Get user details
+            const userDetails = await Userdetails.findOne({ owner: user._id });
+
+            return res.json({
+                message: "success",
+                data: {
+                    id: user._id,
+                    username: user.username,
+                    email: user.email,
+                    walletAddress: user.walletAddress,
+                    status: user.status,
+                    auth: "user",
+                    firstname: userDetails?.firstname || "",
+                    lastname: userDetails?.lastname || "",
+                    profilepicture: userDetails?.profilepicture || ""
+                }
+            });
+
+        } else {
+            // Staff user
+            const staffUser = await Staffusers.findById(decodedToken.id);
+
+            if (!staffUser) {
+                return res.status(401).json({ 
+                    message: 'Unauthorized', 
+                    data: "Staff user not found!" 
+                });
+            }
+
+            if (staffUser.status !== "active") {
+                return res.status(401).json({ 
+                    message: 'failed', 
+                    data: `Your account has been ${staffUser.status}! Please contact support for more details.` 
+                });
+            }
+
+            if (decodedToken.token !== staffUser.webtoken) {
+                return res.status(401).json({ 
+                    message: 'duallogin', 
+                    data: "Your account has been opened on another device! You will now be logged out." 
+                });
+            }
+
+            return res.json({
+                message: "success",
+                data: {
+                    id: staffUser._id,
+                    username: staffUser.username,
+                    status: staffUser.status,
+                    auth: staffUser.auth
+                }
+            });
+        }
+
+    } catch (error) {
+        console.error('Session verification error:', error);
+        return res.status(401).json({ 
+            message: 'Unauthorized', 
+            data: "Invalid session!" 
+        });
+    }
+}

@@ -1,4 +1,4 @@
-const { authlogin, register, logout } = require("../controllers/auth");
+const { authlogin, register, logout, checkSession } = require("../controllers/auth");
 const { requestNonce, walletLogin, linkWallet, unlinkWallet } = require("../controllers/walletAuth");
 
 const router = require("express").Router()
@@ -8,6 +8,7 @@ router
     .get("/login", authlogin)
     .post("/register", register)
     .post("/logout", logout)
+    .get("/session", checkSession)
     // Wallet authentication routes
     .post("/wallet/request-nonce", requestNonce)
     .post("/wallet/login", walletLogin)
