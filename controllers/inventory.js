@@ -10,7 +10,7 @@ exports.getMyInventory = async (req, res) => {
         const user = req.user;
         const { includeNFTs = false } = req.query; // Option to include minted items
 
-        const filter = { owner: user._id };
+        const filter = { owner: user._id, isListed: false };
         
         // By default, only show in-game items (not minted)
         if (includeNFTs === 'false' || !includeNFTs) {
@@ -89,7 +89,8 @@ exports.getInventoryByType = async (req, res) => {
         const inventory = await Inventory.find({
             owner: user._id,
             type: type.toLowerCase(),
-            isMinted: false // Only in-game items
+            isMinted: false, // Only in-game items
+            isListed: false // Exclude listed items
         }).populate('item');
 
         return res.json({
@@ -135,6 +136,14 @@ exports.useItem = async (req, res) => {
             return res.status(404).json({ 
                 message: "failed", 
                 data: "Item not found!" 
+            });
+        }
+
+        // Check if item is listed on marketplace
+        if (inventoryItem.isListed) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Cannot use items that are listed on the marketplace!" 
             });
         }
 
@@ -222,6 +231,14 @@ exports.equipItem = async (req, res) => {
             return res.status(404).json({ 
                 message: "failed", 
                 data: "Item not found!" 
+            });
+        }
+
+        // Check if item is listed on marketplace
+        if (inventoryItem.isListed) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Cannot equip items that are listed on the marketplace!" 
             });
         }
 
@@ -319,7 +336,8 @@ exports.getEquippedItems = async (req, res) => {
         const equippedItems = await Inventory.find({
             owner: user._id,
             isEquipped: true,
-            isMinted: false
+            isMinted: false,
+            isListed: false
         }).populate('item');
 
         return res.json({
@@ -478,10 +496,97 @@ exports.mintItem = async (req, res) => {
     }
 };
 
+/**
+ * POST /inventory/list-item
+ * List an item on the marketplace (marks as listed, cannot be used/equipped)
+ */
+exports.listItem = async (req, res) => {
+    try {
+        const user = req.user;
+        const { inventoryId, price } = req.body;
+
+        if (!inventoryId) {
+            return res.status(400).json({ 
+                message: "bad-request", 
+                data: "Inventory ID is required!" 
+            });
+        }
+
+        if (!price || price <= 0) {
+            return res.status(400).json({ 
+                message: "bad-request", 
+                data: "Valid price is required!" 
+            });
+        }
+
+        const inventoryItem = await Inventory.findOne({
+            _id: inventoryId,
+            owner: user._id
+        }).populate('item');
+
+        if (!inventoryItem) {
+            return res.status(404).json({ 
+                message: "failed", 
+                data: "Item not found in your inventory!" 
+            });
+        }
+
+        if (inventoryItem.isListed) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Item is already listed on the marketplace!" 
+            });
+        }
+
+        if (!inventoryItem.isMinted) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Only minted NFTs can be listed on the marketplace!" 
+            });
+        }
+
+        // Unequip item if it's equipped
+        if (inventoryItem.isEquipped) {
+            inventoryItem.isEquipped = false;
+        }
+
+        // Mark as listed
+        inventoryItem.isListed = true;
+        await inventoryItem.save();
+
+        // Create marketplace listing
+        const marketplaceListing = await Marketplace.create({
+            seller: user._id,
+            inventoryItem: inventoryItem._id,
+            tokenId: inventoryItem.nftData?.tokenId,
+            price: price,
+            currency: 'ETH',
+            status: 'active',
+            listedAt: new Date()
+        });
+
+        return res.json({
+            message: "success",
+            data: {
+                message: `Listed ${inventoryItem.itemname} on marketplace`,
+                listing: marketplaceListing,
+                inventoryItem: inventoryItem
+            }
+        });
+
+    } catch (err) {
+        console.error('List item error:', err);
+        return res.status(500).json({ 
+            message: "error", 
+            data: "Failed to list item on marketplace." 
+        });
+    }
+};
+
 // Helper function
 async function getSummaryByType(userId) {
     const summary = await Inventory.aggregate([
-        { $match: { owner: userId, isMinted: false } },
+        { $match: { owner: userId, isMinted: false, isListed: false } },
         { 
             $group: { 
                 _id: "$type", 

@@ -8,9 +8,10 @@ const {
     equipItem,
     unequipItem,
     getEquippedItems,
-    getInventoryStats
+    getInventoryStats,
+    mintItem,
+    listItem
 } = require("../controllers/inventory");
-const { mintItem } = require("../controllers/inventory");
 
 router
     // Get player's inventory (in-game items only by default)
@@ -39,5 +40,8 @@ router
     
     // Mint one or more copies of an in-game item into NFTs (creates minted inventory records)
     .post("/mint-item", protectuser, mintItem)
+    
+    // List an item on the marketplace
+    .post("/list-item", protectuser, listItem)
 
 module.exports = router;
