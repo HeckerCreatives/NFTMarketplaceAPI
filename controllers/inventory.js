@@ -583,6 +583,143 @@ exports.listItem = async (req, res) => {
     }
 };
 
+/**
+ * POST /inventory/transfer-item
+ * Transfer a minted NFT item to another user (updates ownership after blockchain transfer)
+ */
+exports.transferItem = async (req, res) => {
+    try {
+        const user = req.user;
+        const { inventoryId, recipientWallet, txHash } = req.body;
+
+        if (!inventoryId) {
+            return res.status(400).json({ 
+                message: "bad-request", 
+                data: "Inventory ID is required!" 
+            });
+        }
+
+        if (!recipientWallet || !recipientWallet.match(/^0x[0-9a-fA-F]{40}$/)) {
+            return res.status(400).json({ 
+                message: "bad-request", 
+                data: "Valid recipient wallet address is required!" 
+            });
+        }
+
+        if (!txHash) {
+            return res.status(400).json({ 
+                message: "bad-request", 
+                data: "Transaction hash is required!" 
+            });
+        }
+
+        const inventoryItem = await Inventory.findOne({
+            _id: inventoryId,
+            owner: user._id
+        }).populate('item');
+
+        if (!inventoryItem) {
+            return res.status(404).json({ 
+                message: "failed", 
+                data: "Item not found in your inventory!" 
+            });
+        }
+
+        if (!inventoryItem.isMinted) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Only minted NFTs can be transferred!" 
+            });
+        }
+
+        if (inventoryItem.isListed) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Cannot transfer items that are listed on the marketplace! Unlist it first." 
+            });
+        }
+
+        if (!inventoryItem.isTransferable) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "This item is not transferable!" 
+            });
+        }
+
+        const Users = require('../models/Users');
+        
+        // Find recipient by wallet address
+        const recipientUser = await Users.findOne({ 
+            walletAddress: recipientWallet.toLowerCase() 
+        });
+
+        if (!recipientUser) {
+            return res.status(404).json({ 
+                message: "failed", 
+                data: "Recipient wallet address not found in system! User must link their wallet first." 
+            });
+        }
+
+        if (recipientUser._id.toString() === user._id.toString()) {
+            return res.status(400).json({ 
+                message: "failed", 
+                data: "Cannot transfer to yourself!" 
+            });
+        }
+
+        // Update transfer history
+        inventoryItem.transferHistory.push({
+            from: user.walletAddress || "unknown",
+            to: recipientWallet.toLowerCase(),
+            txHash: txHash,
+            action: "transfer",
+            timestamp: new Date()
+        });
+
+        // Update owner
+        const oldOwnerId = inventoryItem.owner;
+        inventoryItem.owner = recipientUser._id;
+        
+        // Unequip if equipped
+        if (inventoryItem.isEquipped) {
+            inventoryItem.isEquipped = false;
+        }
+
+        await inventoryItem.save();
+
+        return res.json({
+            message: "success",
+            data: {
+                message: `Successfully transferred ${inventoryItem.itemname} to ${recipientUser.username}`,
+                transfer: {
+                    itemId: inventoryItem._id,
+                    itemname: inventoryItem.itemname,
+                    tokenId: inventoryItem.nftData?.tokenId,
+                    from: {
+                        userId: oldOwnerId,
+                        username: user.username,
+                        wallet: user.walletAddress
+                    },
+                    to: {
+                        userId: recipientUser._id,
+                        username: recipientUser.username,
+                        wallet: recipientUser.walletAddress
+                    },
+                    txHash: txHash,
+                    timestamp: new Date()
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error('Transfer item error:', err);
+        return res.status(500).json({ 
+            message: "error", 
+            data: "Failed to transfer item." 
+        });
+    }
+};
+
 // Helper function
 async function getSummaryByType(userId) {
     const summary = await Inventory.aggregate([

@@ -226,3 +226,86 @@ exports.checkSession = async (req, res) => {
         });
     }
 }
+
+exports.getUserList = async (req, res) => {
+    try {
+        const user = req.user;
+        const { search = "", limit = 20, page = 1 } = req.query;
+
+        const pageOptions = {
+            page: parseInt(page) || 0,
+            limit: parseInt(limit) || 20,
+        }
+
+        // Build match condition - exclude current user and apply search
+        const matchCondition = {
+            _id: { $ne: user._id }, // Exclude the authenticated user
+            status: "active" // Only show active users
+        };
+
+        // Add search condition if provided
+        if (search && search.trim()) {
+            matchCondition.username = { $regex: search.trim(), $options: 'i' };
+        }
+
+        // Get total count for pagination
+        const totalUsers = await Users.countDocuments(matchCondition);
+
+        // Fetch users with userdetails
+        const users = await Users.find(matchCondition)
+            .select('username walletAddress status createdAt')
+            .sort({ createdAt: -1 })
+            .skip(pageOptions.page * pageOptions.limit)
+            .limit(pageOptions.limit)
+            .lean();
+
+        // Get user details for each user
+        const userIds = users.map(u => u._id);
+        const userDetails = await Userdetails.find({ owner: { $in: userIds } })
+            .select('owner firstname lastname profilepicture')
+            .lean();
+
+        // Create a map for quick lookup
+        const detailsMap = userDetails.reduce((acc, detail) => {
+            acc[detail.owner.toString()] = detail;
+            return acc;
+        }, {});
+
+        // Combine users with their details
+        const usersWithDetails = users.map(user => {
+            const details = detailsMap[user._id.toString()] || {};
+            return {
+                id: user._id,
+                username: user.username,
+                walletAddress: user.walletAddress || null,
+                status: user.status,
+                createdAt: user.createdAt,
+                firstname: details.firstname || "",
+                lastname: details.lastname || "",
+                profilepicture: details.profilepicture || ""
+            };
+        });
+
+        return res.json({
+            message: "success",
+            data: {
+                users: usersWithDetails,
+                pagination: {
+                    currentPage: pageOptions.page,
+                    totalPages: Math.ceil(totalUsers / pageOptions.limit),
+                    totalUsers: totalUsers,
+                    limit: pageOptions.limit,
+                    hasNextPage: pageOptions.page < Math.ceil(totalUsers / pageOptions.limit),
+                    hasPrevPage: pageOptions.page > 0
+                }
+            }
+        });
+
+    } catch (err) {
+        console.error('Get user list error:', err);
+        return res.status(500).json({ 
+            message: "error", 
+            data: "Failed to retrieve user list." 
+        });
+    }
+}

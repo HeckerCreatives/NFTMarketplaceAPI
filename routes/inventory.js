@@ -10,7 +10,8 @@ const {
     getEquippedItems,
     getInventoryStats,
     mintItem,
-    listItem
+    listItem,
+    transferItem
 } = require("../controllers/inventory");
 
 router
@@ -43,5 +44,8 @@ router
     
     // List an item on the marketplace
     .post("/list-item", protectuser, listItem)
+    
+    // Transfer a minted NFT to another user
+    .post("/transfer-item", protectuser, transferItem)
 
 module.exports = router;
